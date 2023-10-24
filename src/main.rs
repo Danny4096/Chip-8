@@ -21,14 +21,15 @@ use std::vec;
 
 const CHIP_8_HEIGHT: usize = 32;
 const CHIP_8_WIDTH: usize = 64;
-const SCREEN_SCALAR: usize = 10;
-const ROM_PATH: &str = r"C:\Users\Danyaal\Documents\Rust\chip8\morse_demo.ch8";
+const SCREEN_SCALAR: usize = 20;
+const ROM_PATH: &str = r"C:\Users\Danyaal\Documents\Rust\chip8\pong.ch8";
 
 fn main() {
     // the chip-8 uses 8 bit data registers and 16 bit address reg., pc, & stack
     type BYTE = u8;
     type WORD = u16;
 
+    let sleep_duration = std::time::Duration::from_millis(15);
     // the chip-8 has 0xFFF bytes of memory
     let mut memory: [BYTE; 0xFFF] = [0x00; 0xFFF];
     // 16 8-bit registers
@@ -52,20 +53,22 @@ fn main() {
     // the screen is 64*32
     // sprites are drawn using a co-ordinate system
     // sprites have a width of 8 and variable height up to 15
+    // SDL2
     // co-ords refer to the top-left pixel of a sprite
     let mut screen_buffer: [[BYTE; CHIP_8_WIDTH]; CHIP_8_HEIGHT] =
         [[0; CHIP_8_WIDTH]; CHIP_8_HEIGHT];
-    // SDL2
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
     let audio_subsystem = sdl_context.audio().unwrap();
 
     let desired_spec = AudioSpecDesired {
-        freq: Some(48_000),
-        channels: Some(2),
-        // mono  -
-        samples: None, // default sample size
+        freq: Some(44100),
+        channels: Some(1), // mono
+        samples: None,     // default sample size
     };
+
+    let audio_device = AudioDriver::new(&sdl_context);
+    //audio_device.start_beep();
 
     let window = video_subsystem
         .window(
@@ -101,7 +104,7 @@ fn main() {
         }
         //canvas.clear();
         canvas.present();
-        ::std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 30));
+        //::std::thread::sleep(std::time::Duration::new(0, 1_000_000_000u32 / 30));
 
         keypad = poll_kb(&sdl_context, &mut event_pump);
         if key_wait {
@@ -113,96 +116,108 @@ fn main() {
                     break;
                 }
             }
-        }
-        println!("keypad: {:?}", keypad);
-        let opcode: u16 = fetch_opcode(&memory, &mut program_counter);
-        println!("opc: {:x}", opcode);
-        // NNN:   address
-        // NN:    8-bit const
-        // N:     4-bit const
-        // X, Y:  4-bit register identifier
-        // PC:    Program Counter
-        // VN:    One of 16 vars. N is 0x0-F
-        // I:     16-bit addr reg (akin to void ptr)
+        } else {
+            println!("keypad: {:?}", keypad);
+            let opcode: u16 = fetch_opcode(&memory, &mut program_counter);
+            println!("opc: {:x}", opcode);
+            // NNN:   address
+            // NN:    8-bit const
+            // N:     4-bit const
+            // X, Y:  4-bit register identifier
+            // PC:    Program Counter
+            // VN:    One of 16 vars. N is 0x0-F
+            // I:     16-bit addr reg (akin to void ptr)
 
-        match opcode & 0xF000 {
-            // 00E0, 00EE
-            0x0000 => match opcode & 0x000F {
-                0x0000 => op_00E0!(screen_buffer),
-                0x000E => op_00EE!(program_counter, opcode, &mut stack),
-                _ => unreachable!(),
-            },
-            // 1NNN
-            0x1000 => op_1NNN!(program_counter, opcode),
-            // 2NNN
-            0x2000 => op_2NNN!(program_counter, opcode, stack),
-            // 3XNN
-            0x3000 => op_3XNN!(program_counter, opcode, registers),
-            // 4XNN
-            0x4000 => op_4XNN!(program_counter, opcode, registers),
-            // 5XY0
-            0x5000 => op_5XY0!(program_counter, opcode, registers),
-            // 6XNN
-            0x6000 => op_6XNN!(opcode, registers),
-            // 7XNN
-            0x7000 => op_7XNN!(opcode, registers),
-            // 8XYN
-            0x8000 => match opcode & 0x000F {
-                0x0000 => op_8XY0!(opcode, registers),
-                0x0001 => op_8XY1!(opcode, registers),
-                0x0002 => op_8XY2!(opcode, registers),
-                0x0003 => op_8XY3!(opcode, registers),
-                0x0004 => op_8XY4!(opcode, registers),
-                0x0005 => op_8XY5!(opcode, registers),
-                0x0006 => op_8XY6!(opcode, registers),
-                0x0007 => op_8XY7!(opcode, registers),
-                0x000E => op_8XYE!(opcode, registers),
-                _ => unreachable!(),
-            },
-            // 9XY0
-            0x9000 => op_9XY0!(program_counter, opcode, registers),
-            0xA000 => op_ANNN!(address_i, opcode),
-            0xB000 => op_BNNN!(program_counter, opcode, registers),
-            0xC000 => op_CXNN!(opcode, registers),
-            0xD000 => {
-                let regx = ((opcode & 0x0F00) >> 8) as usize;
-                let regy = ((opcode & 0x00F0) >> 4) as usize;
-                let n = (opcode & 0x000F) as u8;
-                registers[0x0f] = 0;
-                for byte in 0..n {
-                    let y = ((registers[regy] as usize + byte as usize) % CHIP_8_HEIGHT);
-                    for bit in 0..8 {
-                        let x = (registers[regx] as usize + bit) % CHIP_8_WIDTH;
-                        let color = ((memory[(address_i + byte as u16) as usize]) >> (7 - bit)) & 1;
-                        registers[0x0f] |= color & screen_buffer[y][x];
-                        screen_buffer[y][x] ^= color;
+            match opcode & 0xF000 {
+                // 00E0, 00EE
+                0x0000 => match opcode & 0x000F {
+                    0x0000 => op_00E0!(screen_buffer),
+                    0x000E => op_00EE!(program_counter, opcode, &mut stack),
+                    _ => unreachable!(),
+                },
+                // 1NNN
+                0x1000 => op_1NNN!(program_counter, opcode),
+                // 2NNN
+                0x2000 => op_2NNN!(program_counter, opcode, stack),
+                // 3XNN
+                0x3000 => op_3XNN!(program_counter, opcode, registers),
+                // 4XNN
+                0x4000 => op_4XNN!(program_counter, opcode, registers),
+                // 5XY0
+                0x5000 => op_5XY0!(program_counter, opcode, registers),
+                // 6XNN
+                0x6000 => op_6XNN!(opcode, registers),
+                // 7XNN
+                0x7000 => op_7XNN!(opcode, registers),
+                // 8XYN
+                0x8000 => match opcode & 0x000F {
+                    0x0000 => op_8XY0!(opcode, registers),
+                    0x0001 => op_8XY1!(opcode, registers),
+                    0x0002 => op_8XY2!(opcode, registers),
+                    0x0003 => op_8XY3!(opcode, registers),
+                    0x0004 => op_8XY4!(opcode, registers),
+                    0x0005 => op_8XY5!(opcode, registers),
+                    0x0006 => op_8XY6!(opcode, registers),
+                    0x0007 => op_8XY7!(opcode, registers),
+                    0x000E => op_8XYE!(opcode, registers),
+                    _ => unreachable!(),
+                },
+                // 9XY0
+                0x9000 => op_9XY0!(program_counter, opcode, registers),
+                0xA000 => op_ANNN!(address_i, opcode),
+                0xB000 => op_BNNN!(program_counter, opcode, registers),
+                0xC000 => op_CXNN!(opcode, registers),
+                0xD000 => {
+                    let regx = ((opcode & 0x0F00) >> 8) as usize;
+                    let regy = ((opcode & 0x00F0) >> 4) as usize;
+                    let n = (opcode & 0x000F) as u8;
+                    registers[0x0f] = 0;
+                    for byte in 0..n {
+                        let y = ((registers[regy] as usize + byte as usize) % CHIP_8_HEIGHT);
+                        for bit in 0..8 {
+                            let x = (registers[regx] as usize + bit) % CHIP_8_WIDTH;
+                            let color =
+                                ((memory[(address_i + byte as u16) as usize]) >> (7 - bit)) & 1;
+                            registers[0x0f] |= color & screen_buffer[y][x];
+                            screen_buffer[y][x] ^= color;
+                        }
                     }
-                }
 
-                //println!("{:?}", screen_buffer);
-                doodle(&screen_buffer, &mut canvas);
+                    //println!("{:?}", screen_buffer);
+                    doodle(&screen_buffer, &mut canvas);
+                }
+                0xE000 => match opcode & 0x00FF {
+                    0x009E => op_EX9E!(program_counter, opcode, keypad),
+                    0x00A1 => op_EXA1!(program_counter, opcode, keypad),
+                    _ => unreachable!(),
+                },
+                0xF000 => match opcode & 0x00FF {
+                    0x0007 => op_FX07!(delay_timer, opcode, registers),
+                    0x000A => op_FX0A!(key_wait, key_reg, opcode),
+                    0x0015 => op_FX15!(delay_timer, opcode, registers),
+                    0x0018 => op_FX18!(sound_timer, opcode, registers),
+                    0x001E => op_FX1E!(address_i, opcode, registers),
+                    0x0029 => op_FX29!(address_i, opcode, registers),
+                    0x0033 => op_FX33!(address_i, opcode, registers, memory),
+                    0x0055 => op_FX55!(address_i, opcode, registers, memory),
+                    0x0065 => op_FX65!(address_i, opcode, registers, memory),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
             }
-            0xE000 => match opcode & 0x00FF {
-                0x009E => op_EX9E(),
-                0x00A1 => op_EXA1(),
-                _ => unreachable!(),
-            },
-            0xF000 => match opcode & 0x00FF {
-                0x0007 => op_FX07!(delay_timer, opcode, registers),
-                0x000A => op_FX0A(),
-                0x0015 => op_FX15!(delay_timer, opcode, registers),
-                0x0018 => op_FX18!(sound_timer, opcode, registers),
-                0x001E => op_FX1E!(address_i, opcode, registers),
-                0x0029 => op_FX29!(address_i, opcode, registers),
-                0x0033 => op_FX33!(address_i, opcode, registers, memory),
-                0x0055 => op_FX55!(address_i, opcode, registers, memory),
-                0x0065 => op_FX65!(address_i, opcode, registers, memory),
-                _ => unreachable!(),
-            },
-            _ => unreachable!(),
+            println!("pc: {:x}", program_counter);
+
+            if delay_timer > 0 {
+                delay_timer -= 1;
+            }
+            if sound_timer > 0 {
+                audio_device.start_beep();
+                sound_timer -= 1;
+            } else {
+                audio_device.stop_beep();
+            }
         }
-        println!("pc: {:x}", program_counter);
-        std::thread::sleep(std::time::Duration::from_millis(0));
+        std::thread::sleep(std::time::Duration::from_millis(15));
     }
 }
 
@@ -263,19 +278,19 @@ fn poll_kb(context: &sdl2::Sdl, events: &mut sdl2::EventPump) -> [bool; 16] {
             Keycode::U => Some(0x1),
             Keycode::I => Some(0x2),
             Keycode::O => Some(0x3),
-            Keycode::P => Some(0xC),
+            Keycode::P => Some(0xc),
             Keycode::Q => Some(0x4),
             Keycode::W => Some(0x5),
             Keycode::E => Some(0x6),
-            Keycode::R => Some(0xD),
+            Keycode::R => Some(0xd),
             Keycode::A => Some(0x7),
             Keycode::S => Some(0x8),
             Keycode::D => Some(0x9),
-            Keycode::F => Some(0xE),
-            Keycode::Z => Some(0xA),
+            Keycode::F => Some(0xe),
+            Keycode::Z => Some(0xa),
             Keycode::X => Some(0x0),
-            Keycode::C => Some(0xB),
-            Keycode::V => Some(0xF),
+            Keycode::C => Some(0xb),
+            Keycode::V => Some(0xf),
             _ => None,
         };
 
@@ -319,6 +334,63 @@ fn fetch_opcode(mem: &[u8; 0xFFF], pc: &mut u16) -> u16 {
     println!("{:b}", opc);
     *pc += 2;
     opc
+}
+
+pub struct AudioDriver {
+    device: AudioDevice<SquareWave>,
+}
+
+impl AudioDriver {
+    pub fn new(sdl_context: &sdl2::Sdl) -> Self {
+        let audio_subsystem = sdl_context.audio().unwrap();
+
+        let desired_spec = AudioSpecDesired {
+            freq: Some(44100),
+            channels: Some(1), // mono
+            samples: None,     // default sample size
+        };
+
+        let device = audio_subsystem
+            .open_playback(None, &desired_spec, |spec| {
+                // Show obtained AudioSpec
+                println!("{:?}", spec);
+
+                // initialize the audio callback
+                SquareWave {
+                    phase_inc: 240.0 / spec.freq as f32,
+                    phase: 0.0,
+                    volume: 0.25,
+                }
+            })
+            .unwrap();
+
+        AudioDriver { device: device }
+    }
+
+    pub fn start_beep(&self) {
+        self.device.resume();
+    }
+    pub fn stop_beep(&self) {
+        self.device.pause();
+    }
+}
+
+struct SquareWave {
+    phase_inc: f32,
+    phase: f32,
+    volume: f32,
+}
+
+impl AudioCallback for SquareWave {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        // Generate a square wave
+        for x in out.iter_mut() {
+            *x = self.volume * if self.phase < 0.5 { 1.0 } else { -1.0 };
+            self.phase = (self.phase + self.phase_inc) % 1.0;
+        }
+    }
 }
 
 fn op_00E0() {}
@@ -590,7 +662,26 @@ macro_rules! op_DXYN {
 // input
 fn op_EX9E() {}
 
+#[macro_export]
+macro_rules! op_EX9E {
+    ($pc:expr, $opcode:expr, $keypad:expr) => {
+        if ($keypad[(($opcode & 0x0F00) >> 8) as usize]) {
+            $pc += 2;
+            println!("got key press: {}", (($opcode & 0x0F00) >> 8))
+        }
+    };
+}
+
 fn op_EXA1() {}
+
+#[macro_export]
+macro_rules! op_EXA1 {
+    ($pc:expr, $opcode:expr, $keypad:expr) => {
+        if (!$keypad[(($opcode & 0x0F00) >> 8) as usize]) {
+            $pc += 2;
+        }
+    };
+}
 
 // store delay timer val in Vx
 #[macro_export]
@@ -601,13 +692,11 @@ macro_rules! op_FX07 {
 }
 
 // Wait for a keypress and store the result in Vx
-fn op_FX0A() {}
-
 #[macro_export]
 macro_rules! op_FX0A {
     ($key_wait:expr, $key_reg:expr, $opcode:expr) => {{
-        key_wait = true;
-        key_reg = (($opcode & 0x0F00) >> 8) as usize;
+        $key_wait = true;
+        $key_reg = (($opcode & 0x0F00) >> 8) as usize;
     }};
 }
 
