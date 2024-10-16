@@ -24,6 +24,8 @@ const CHIP_8_WIDTH: usize = 64;
 const SCREEN_SCALAR: usize = 20;
 const ROM_PATH: &str = r"C:\Users\Danyaal\Documents\Rust\chip8\pong.ch8";
 
+std::time::Duration::from_millis();
+
 fn main() {
     // the chip-8 uses 8 bit data registers and 16 bit address reg., pc, & stack
     type BYTE = u8;
